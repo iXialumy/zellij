@@ -1,5 +1,4 @@
 use zellij_utils::anyhow::{Context, Result};
-use zellij_utils::interprocess::local_socket::LocalSocketListener;
 use zellij_utils::pane_size::Size;
 use zellij_utils::{interprocess, signal_hook};
 
@@ -25,11 +24,11 @@ use std::sync::{Arc, Mutex};
 use std::{io, process, thread, time};
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::INVALID_HANDLE_VALUE,
+    Foundation::{HANDLE, INVALID_HANDLE_VALUE},
     System::Console::{
-        GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle, ReadConsoleInputA,
-        SetConsoleMode, CONSOLE_SCREEN_BUFFER_INFO, COORD, FOCUS_EVENT, FOCUS_EVENT_RECORD,
-        INPUT_RECORD, INPUT_RECORD_0, SMALL_RECT,
+        ReadConsoleInputA, GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle, SetConsoleMode,
+        FOCUS_EVENT, FOCUS_EVENT_RECORD,
+        CONSOLE_SCREEN_BUFFER_INFO, COORD, INPUT_RECORD, INPUT_RECORD_0, SMALL_RECT,
     },
 };
 use zellij_utils::{
@@ -428,22 +427,8 @@ impl ClientOsApi for ClientOsInputOutput {
                 },
             }
         }
-        let socket2;
-        loop {
-            let listener_path =
-                PathBuf::from(format!("{}{}", path.to_string_lossy(), process::id()));
-            match LocalSocketListener::bind(listener_path) {
-                Ok(listener) => {
-                    socket2 = listener.accept().unwrap();
-                    break;
-                },
-                Err(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                },
-            }
-        }
         let sender = IpcSenderWithContext::new(socket);
-        let receiver = IpcReceiverWithContext::new(socket2);
+        let receiver = sender.get_receiver();
         *self.send_instructions_to_server.lock().unwrap() = Some(sender);
         *self.receive_instructions_from_server.lock().unwrap() = Some(receiver);
     }
