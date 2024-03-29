@@ -1092,7 +1092,8 @@ impl ServerOsApi for ServerOsInputOutput {
     fn new_client(
         &mut self,
         client_id: ClientId,
-        stream: IpcSocketStream,
+        stream: LocalSocketStream,
+        sender: LocalSocketStream,
     ) -> Result<IpcReceiverWithContext<ClientToServerMsg>> {
         let receiver = IpcReceiverWithContext::new(stream);
         let sender = ClientSender::new(client_id, receiver.get_sender());
