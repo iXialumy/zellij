@@ -161,6 +161,10 @@ fn assert_socket(name: &str) -> bool {
                 .send(ClientToServerMsg::ConnStatus)
                 .with_context(|| "Query connection status")
                 .non_fatal();
+            sender
+                .send(ClientToServerMsg::ConnStatus)
+                .with_context(|| "Query connection status")
+                .non_fatal();
             match receiver.recv() {
                 Ok((ServerToClientMsg::Connected, _)) => true,
                 Err(_) => false,
