@@ -1,7 +1,8 @@
 use zellij_utils::anyhow::{Context, Result};
-use zellij_utils::errors::FatalError;
-use zellij_utils::ipc::ReceiveError;
+use zellij_utils::interprocess::local_socket::LocalSocketListener;
+use zellij_utils::ipc::IpcSocketStream;
 use zellij_utils::pane_size::Size;
+use zellij_utils::windows_utils::named_pipe;
 use zellij_utils::{interprocess, signal_hook};
 
 use interprocess::local_socket::LocalSocketStream;
@@ -22,7 +23,7 @@ use std::os::unix::io::RawFd;
 #[cfg(windows)]
 use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, RawHandle};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::{Arc, Mutex};
 use std::{io, process, thread, time};
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -176,7 +177,7 @@ pub trait ClientOsApi: Send + Sync {
     /// Set the terminal associated to file descriptor `fd` to
     /// [raw mode](https://en.wikipedia.org/wiki/Terminal_mode).
     #[cfg(unix)]
-    fn set_raw_mode(&mut self, fd: RawFd, enable_mode: u32, disable_mode: u32);
+    fn set_raw_mode(&mut self, fd: RawFd);
     #[cfg(windows)]
     fn set_raw_mode(&mut self, handle_type: u32, enable_mode: u32, disable_mode: u32);
     /// Set the terminal associated to file descriptor `fd` to
@@ -195,7 +196,7 @@ pub trait ClientOsApi: Send + Sync {
     fn send_to_server(&self, msg: ClientToServerMsg);
     /// Receives a message on client-side IPC channel
     // This should be called from the client-side router thread only.
-    fn recv_from_server(&self) -> Result<(ServerToClientMsg, ErrorContext), ReceiveError>;
+    fn recv_from_server(&self) -> Option<(ServerToClientMsg, ErrorContext)>;
     fn handle_signals(&self, sigwinch_cb: Box<dyn Fn()>, quit_cb: Box<dyn Fn()>);
     /// Establish a connection with the server socket.
     fn connect_to_server(&self, path: &Path);
@@ -214,7 +215,7 @@ impl ClientOsApi for ClientOsInputOutput {
         get_terminal_size(handle_type)
     }
     #[cfg(unix)]
-    fn set_raw_mode(&mut self, fd: RawFd, _enable_mode: u32, _disable_mode: u32) {
+    fn set_raw_mode(&mut self, fd: RawFd) {
         into_raw_mode(fd);
     }
 
@@ -382,23 +383,15 @@ impl ClientOsApi for ClientOsInputOutput {
             .unwrap()
             .as_mut()
             .unwrap()
-            .send(msg)
-            .with_context(|| "Failed to send message to server")
-            .non_fatal();
+            .send(msg);
     }
-    fn recv_from_server(&self) -> Result<(ServerToClientMsg, ErrorContext), ReceiveError> {
-        log::info!("Receiving from Server");
-        let receiver = self.receive_instructions_from_server.try_lock();
-        let result = match receiver {
-            Ok(mut receiver) => receiver
-                .as_mut()
-                .expect("Receiver should be initialized by now")
-                .recv(),
-            Err(TryLockError::WouldBlock) => Err(ReceiveError::ReceiverLocked),
-            Err(TryLockError::Poisoned(err)) => panic!("receiver has been poisoned"),
-        };
-        log::info!("{:?} received from server", &result);
-        result
+    fn recv_from_server(&self) -> Option<(ServerToClientMsg, ErrorContext)> {
+        self.receive_instructions_from_server
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .recv()
     }
     fn handle_signals(&self, sigwinch_cb: Box<dyn Fn()>, quit_cb: Box<dyn Fn()>) {
         #[cfg(unix)]
@@ -425,8 +418,20 @@ impl ClientOsApi for ClientOsInputOutput {
         }
     }
     fn connect_to_server(&self, path: &Path) {
-        let (sender, receiver) = zellij_utils::ipc::connect_to_server(path);
-
+        let socket;
+        loop {
+            match IpcSocketStream::connect(path) {
+                Ok(sock) => {
+                    socket = sock;
+                    break;
+                },
+                Err(_) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                },
+            }
+        }
+        let receiver = IpcReceiverWithContext::new(socket);
+        let sender = receiver.get_sender();
         *self.send_instructions_to_server.lock().unwrap() = Some(sender);
         *self.receive_instructions_from_server.lock().unwrap() = Some(receiver);
     }
