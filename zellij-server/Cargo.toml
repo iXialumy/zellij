@@ -39,7 +39,7 @@ daemonize = "0.4.1"
 close_fds = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
-winpty-rs = "0.3.13"
+winpty-rs = "0.3.16"
 windows = { version = "0.52.0", features = ["Win32_System_Console"] }
 
 
