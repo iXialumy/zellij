@@ -85,8 +85,13 @@ pub fn install(sh: &Shell, flags: flags::Install) -> anyhow::Result<()> {
             .join(&flags.destination)
     };
     sh.change_dir(crate::project_root());
+    #[cfg(unix)]
     sh.copy_file("target/release/zellij", &destination)
         .with_context(err_context)
+    #[cfg(windows)]
+    sh.copy_file("target/release/zellij.exe", &destination)
+        .with_context(err_context)
+    
 }
 
 /// Run zellij debug build.

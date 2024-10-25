@@ -277,6 +277,8 @@ fn handle_terminal(
     quit_cb: Box<dyn Fn(PaneId, Option<i32>, RunCommand) + Send>,
     terminal_id: u32,
 ) -> Result<Arc<RwLock<PTY>>> {
+    use std::f32::consts::E;
+
     let err_context = || "failed to spawn terminal";
 
     let pty_args = PTYArgs {
@@ -305,11 +307,21 @@ fn handle_terminal(
     let pty = Arc::new(RwLock::new(pty));
     let monitored_pty = pty.clone();
     thread::spawn(move || loop {
-        if let Ok(Ok(Some(exit_code))) = monitored_pty.try_read().map(|x| x.get_exitstatus()) {
-            quit_cb(PaneId::Terminal(terminal_id), Some(exit_code as i32), cmd);
-            break;
+        if let Ok(pty) = monitored_pty.try_read() {
+            if let Ok(Some(exit_code)) =  pty.get_exitstatus() {
+                quit_cb(PaneId::Terminal(terminal_id), Some(exit_code as i32), cmd);
+                break;    
+            } else {
+                let _ = pty.wait_for_exit(); 
+                // Block the thread until the Process is notified
+                // Failures indicate some problem waiting for the process
+                // Ok(true) indicates a spurious wakeup.
+            }
+        } else {
+            // Can not obtain a read lock for monitored_pty
+            // Retry in 50ms
+            thread::sleep(std::time::Duration::from_millis(50))
         }
-        thread::sleep(std::time::Duration::from_millis(50)) // TODO figure out better way to register callback on process exit.
     });
     Ok(pty)
 }
